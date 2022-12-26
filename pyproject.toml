@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotifyatlas"
+version = "0.1.0"
+description = "A pythonic wrapper for the Spotify web API."
+readme = "README.md"
+authors = [{ name = "Leonardo Corona Garza", email = "leocoronag@gmail.com" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["spotify", "api", "wrapper", "web", "requests"]
+dependencies = [
+    "requests >= 2.25.1"
+]
+requires-python = ">=3.7"

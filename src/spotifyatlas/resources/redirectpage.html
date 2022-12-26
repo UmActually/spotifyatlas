@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Temporal Redirect Page</title>
+    </head>
+    <body>
+        <h1 id="headerContent">You can now close this window</h1>
+        <p id="pContent">This page serves as a redirection point for Spotify's user authorization.<br>Don't worry, this local web server only runs while the user authorizes.</p>
+        <p>If you wish, you can revoke the authorization of your application when you're done, inside <a href="https://www.spotify.com/account/apps/">your profile settings</a>.</p>
+        <script>
+            if (window.location.search.includes("access_denied")) {
+                document.getElementById("headerContent").innerText = "Denied authorizing the application"
+                document.getElementById("pContent").innerText = "User authorization is needed for some API actions, like modifying playlists."
+            }
+        </script>
+    </body>
+</html>
