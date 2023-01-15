@@ -15,7 +15,7 @@ import requests
 from . import utils
 # noinspection PyProtectedMember
 from .datastructs import \
-    SpotifyAPIException, SpotifyUserAuthException, Track, Result, TrackResult
+    SpotifyAPIException, SpotifyUserAuthException, Track, Result, TrackResult, UserResult
 
 
 __all__ = ['SpotifyAPI']
@@ -109,7 +109,7 @@ class SpotifyAPI:
         self._user_expires = datetime.datetime.now()
         self._prefer_user_token = False
 
-    def get(self, url: str) -> Result:
+    def get(self, url: str) -> Union[Result, TrackResult, UserResult]:
         """**Universal method to retreive the tracks and details of something in Spotify.**
 
         :param url: the URL of the playlist, track, album, or artist
@@ -128,6 +128,8 @@ class SpotifyAPI:
             return self.get_artist(url)
         if kind == 'album':
             return self.get_album(url)
+        if kind == 'user':
+            return self.get_user(url)
 
     def _get_playlist_slice(self, url: str) -> Tuple[List[Dict], Optional[str]]:
         """Continue fetching the tracks of a playlist, in the case it has more than 100."""
@@ -141,6 +143,7 @@ class SpotifyAPI:
         result = r.json()
         return result['items'], result['next']
 
+    @functools.lru_cache(maxsize=10)
     def get_playlist(self, url: str) -> Result:
         """**Get the tracks and details of a playlist.**
 
@@ -266,6 +269,36 @@ class SpotifyAPI:
             album, result['name'], result['artists'][0]['name'], album_id,
             SpotifyAPI._get_image_from_result(result))
 
+    def get_user(self, url: str) -> UserResult:
+        """**Get the details of a user.**
+
+        :param url: the URL or ID of the user
+        :return: a ``UserResult``
+        """
+
+        user_id = utils.id_from_url(url)
+
+        r = requests.get(f'https://api.spotify.com/v1/users/{user_id}', headers=self._auth_headers())
+        if r.status_code >= 400:
+            raise SpotifyAPIException(r, 'Error ocurred while retrieving user details.')
+
+        response = r.json()
+        return UserResult(response['display_name'], user_id, SpotifyAPI._get_image_from_result(response))
+
+    @_requires_user_auth
+    def get_me(self) -> UserResult:
+        """**Get the details of the own user.**
+
+        :return: a ``UserResult``
+        """
+
+        r = requests.get(f'https://api.spotify.com/v1/me', headers=self._user_auth_headers())
+        if r.status_code >= 400:
+            raise SpotifyAPIException(r, 'Error ocurred while retrieving user details.')
+
+        response = r.json()
+        return UserResult(response['display_name'], response['id'], SpotifyAPI._get_image_from_result(response))
+
     @_requires_user_auth
     def get_private_playlist(self, url: str) -> Result:
         """**Get the tracks and details of a private playlist that belongs to you.**
@@ -315,19 +348,23 @@ class SpotifyAPI:
             add_slice()
 
     @_requires_user_auth
-    def clear_playlist(self, url: str) -> Result:
+    def clear_playlist(self, url: str, *, make_copy: bool = False) -> Result:
         """**Remove ALL the songs in a playlist.**
 
         The playlist must belong to you, or be collaborative.
 
         If you use this method to automatically rearrange or update the tracks in a playlist,
-        I **strongly** recommend that you make a copy of the playlist before anything. Although
-        unlikely, it is possible that the API request succeeds when clearing the playlist, and
-        then fails while putting the tracks back.
+        I **strongly** recommend that you make a copy of the playlist before anything, by setting
+        ``make_copy`` to ``True``. Although unlikely, it is possible that the API request succeeds
+        when clearing the playlist, and then fails while putting the tracks back.
 
         :param url: the URL or ID of the playlist
-        :return: ``None``
+        :param make_copy: whether to back up the playlist before clearing it
+        :return: the playlist ``Result`` before being modified
         """
+        if make_copy:
+            self.create_playlist_copy(url)
+
         playlist_id = utils.id_from_url(url)
 
         result = self.get_private_playlist(url)
@@ -378,6 +415,49 @@ class SpotifyAPI:
             f'https://api.spotify.com/v1/playlists/{playlist_id}/tracks', data=data, headers=headers)
         if r.status_code >= 400:
             raise SpotifyAPIException(r, 'Error ocurred while changing the order of the tracks.')
+
+    @_requires_user_auth
+    def create_playlist(self, name: str, *, description: Optional[str] = None, public: bool = True,
+                        collaborative: bool = False) -> str:
+        """**Create a new playlist for the user.**
+
+        :param name: the name of the new playlist
+        :param description: optionally, a description
+        :param public: whether to make the playlist visible to any user
+        :param collaborative: whether to make the playlist collaborative (this sets ``pubilc`` to ``False``)
+        :return: the new playlist URL
+        """
+
+        user_id = self.get_me().id
+        data = {
+            'name': name,
+            'public': public,
+            'collaborative': collaborative
+        }
+        if collaborative:
+            data['public'] = False
+        if description:
+            data['description'] = description
+
+        r = requests.post(
+            f'https://api.spotify.com/v1/users/{user_id}/playlists', data=json.dumps(data),
+            headers=self._user_auth_headers(content_type='application/json'))
+        if r.status_code >= 400:
+            raise SpotifyAPIException(r, 'Error ocurred while creating playlist.')
+
+        return r.json()['external_urls']['spotify']
+
+    @_requires_user_auth
+    def create_playlist_copy(self, url: str) -> str:
+        """**Create a new playlist with the same tracks as the received playlist URL.**
+
+        :param url: the playlist to copy
+        :return: the new playlist URL
+        """
+        playlist = self.get_private_playlist(url)
+        new_url = self.create_playlist(playlist.name + ' copy', public=False)
+        self.add_to_playlist(new_url, playlist.tracks)
+        return new_url
 
     def _auth_headers(self, content_type: Optional[str] = None) -> Dict[str, str]:
         """Returns the authorization headers for many requests to the API.

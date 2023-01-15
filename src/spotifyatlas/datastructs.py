@@ -5,7 +5,7 @@ import requests
 from . import utils
 
 
-__all__ = ['Track']
+__all__ = ['SpotifyAPIException', 'SpotifyUserAuthException', 'Track', 'Result', 'TrackResult', 'UserResult']
 
 
 class SpotifyAPIException(Exception):
@@ -127,3 +127,20 @@ class TrackResult(Result):
     @property
     def artist(self) -> str:
         return self.author_or_artist
+
+
+class UserResult:
+    """**Represents an user result from the Spotify API.**"""
+
+    def __init__(self, display_name: Optional[str], _id: str, image_url: Optional[str] = None):
+        self.display_name = display_name
+        self.id = _id
+        self.image_url = image_url
+
+    def __repr__(self):
+        name = self.display_name.replace('\'', '\\\'')
+        image_url = '' if self.image_url is None else f', \'{self.image_url}\''
+        return f'UserResult(\'{name}\', \'{self.id}\'{image_url})'
+
+    def __str__(self):
+        return f'{self.display_name} - {self.id}'
