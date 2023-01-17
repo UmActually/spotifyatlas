@@ -63,7 +63,7 @@ They all require the `url` or the ID of the element as the first argument.
 
 ### Searching
 
-Worry not, not everything demands you having the link of the item at hand. To perform **searches**, you can use the following methods:
+Not everything demands you having the link of the item at hand. To perform **searches**, you can use the following methods:
 
 - `search()` to search normally, with the option to specify result types.
 
@@ -74,7 +74,7 @@ print(top_album_result.tracks)
 # [Track('All My Favorite Songs', 'Weezer', '6zVhXpiYbJhLJWmLGV9k1r'), ... ]
 ```
 
-- `im_feeling_lucky()` if you know in advance exactly what you are looking for.
+- `im_feeling_lucky()` if you know in advance exactly what you are looking for. It is essentially the same as `search()` but returns directly the top `Result` of the specified type.
 
 ```python
 result = spoti.im_feeling_lucky('quevedo biza', spotifyatlas.Type.TRACK)
@@ -156,9 +156,13 @@ def artist_sort_key(_track: Track) -> str:
 MY_PLAYLIST = '<my-playlist-link>'
 spoti = SpotifyAPI('<my-client-id>', '<my-client-secret>')
 
-result = spoti.clear_playlist(MY_PLAYLIST)
+# make_copy makes a backup of the playlist before removing its contents
+result = spoti.clear_playlist(MY_PLAYLIST, make_copy=True)
+
+# result is the state of the playlist before being cleared
 tracks = result.tracks
 tracks.sort(key=artist_sort_key)
+
 spoti.add_to_playlist(MY_PLAYLIST, tracks)
 ```
 
@@ -178,5 +182,5 @@ playlist2 = spoti.get(MY_FRIENDS_PLAYLIST).tracks
 # Set theory!!!
 blend = set(playlist1).intersection(set(playlist2))
 for i, track in enumerate(blend, 1):
-    print(i, track.name, track.artist, sep=' - ')
+    print(i, track, sep=' - ')
 ```

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Union, List, TYPE_CHECKING
+from typing import Optional, Union, List, Iterator, TYPE_CHECKING
+import itertools
 import requests
 from .enums import Type
 from . import utils
@@ -116,10 +117,13 @@ class Result:
         without tracks. In that case, they will be retreived in here by shamelessly
         accessing a SpotifyAPI object."""
         if self._tracks is None:
-            # Sike, BaseSpotifyAPI actually returns the usual class
-            # see: baseapi.py
-            spoti: SpotifyAPI = BaseSpotifyAPI(self._client_id, '')
-            self._tracks = spoti.get(self.id, result_type=self.type)._tracks
+            if self.type == Type.TRACK:
+                self._tracks = [Track(self.name, self.author_or_artist, self.id)]
+            else:
+                # Sike, BaseSpotifyAPI actually returns the usual class
+                # see: baseapi.py
+                spoti: SpotifyAPI = BaseSpotifyAPI(self._client_id, '')
+                self._tracks = spoti.get(self.id, result_type=self.type)._tracks
         return self._tracks
 
     @property
@@ -131,6 +135,9 @@ class Result:
     def artist(self) -> str:
         """Alias for ``author_or_artist``."""
         return self.author_or_artist
+
+    def __iter__(self):
+        return iter(self.tracks)
 
     def __bool__(self) -> bool:
         return self._tracks is not None
@@ -182,6 +189,46 @@ class SearchResult:
         self.artists = artists
         self.playlists = playlists
         self.tracks = tracks
+
+    def flatten(self) -> Iterator[Result]:
+        """**Make a single iterator out of all the search result lists (breadth-first).**
+
+        Returns an iterator that yields values from every list equally in order of
+        popularity. For example, if all lists have twenty items, this iterator would
+        result in ``(album1, artist1, playlist1, track1, album2, artist2, ... ,
+        playlist20, track20)``.
+
+        The lists of a ``SearchResult`` object, however, may have different lengths.
+        This iterator always will return the next available element, until all
+        lists are exhausted.
+
+        This method is implicitly called if you iterate over this class, like when
+        using a for loop.
+        """
+
+        return filter(  # unholy itertools one-liner alert
+            lambda x: x is not None,
+            itertools.chain(*itertools.zip_longest(
+                self.albums, self.artists, self.playlists, self.tracks,
+                fillvalue=None)))
+
+    def chain(self) -> Iterator[Result]:
+        """**Make a single iterator out of all the search result lists (depth-first).**
+
+        Returns an iterator that yields values from every list, one list after the other.
+        For example, if all lists have twenty items, this iterator would result in
+        ``(album1, album2, album3, ... , album20, artist1, artist2, artist3, ... ,
+        track20)``.
+
+        The lists of a ``SearchResult`` object, however, may have different lengths.
+        This iterator always will return the next available element, until all
+        lists are exhausted.
+        """
+
+        return itertools.chain(self.albums, self.artists, self.playlists, self.tracks)
+
+    def __iter__(self) -> Iterator[Result]:
+        return self.flatten()
 
     def __eq__(self, other: SearchResult) -> bool:
         return self.query == other.query
