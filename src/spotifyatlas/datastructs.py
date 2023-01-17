@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from typing import Optional, List
+from typing import Optional, Union, List, TYPE_CHECKING
 import requests
+from .enums import Type
 from . import utils
+from .baseapi import BaseSpotifyAPI
+if TYPE_CHECKING:
+    from .spotifyapi import SpotifyAPI
 
 
-__all__ = ['SpotifyAPIException', 'SpotifyUserAuthException', 'Track', 'Result', 'TrackResult', 'UserResult']
+__all__ = ['SpotifyAPIException', 'SpotifyUserAuthException', 'Track', 'Result', 'UserResult', 'SearchResult']
 
 
 class SpotifyAPIException(Exception):
     """Exception class for errors with the Spotify API, both requests and responses."""
 
-    def __init__(self, r: Optional[requests.Response] = None, message: str = ''):
+    def __init__(self, r: Optional[requests.Response] = None, message: str = '') -> None:
         if r is None and not message:
             super().__init__(
                 'There was an unknown error with the current '
@@ -69,14 +73,12 @@ class Track:
         return self.id == other.id
 
     def __repr__(self) -> str:
-        name = self.name.replace('\'', '\\\'')
-        artist = self.artist.replace('\'', '\\\'')
-        return f'Track(\'{name}\', \'{artist}\', \'{self.id}\')'
+        return f'Track({repr(self.name)}, {repr(self.artist)}, {repr(self.id)})'
 
     def __str__(self) -> str:
         return f'{self.name} - {self.artist}'
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self.id)
 
 
@@ -95,52 +97,98 @@ class Result:
     This class is not intended to be used manually.
     """
 
-    def __init__(self, tracks: List[Track], name: str, author_or_artist: str, _id: str,
-                 image_url: Optional[str] = None):
-        self.tracks = tracks
+    def __init__(self, _id: str, _type: Union[Type, str], name: str, author_or_artist: str,
+                 tracks: Optional[List[Track]] = None, image_url: Optional[str] = None, *,
+                 client_id: Optional[str] = None) -> None:
+        if tracks is None and client_id is None:
+            raise ValueError('Tracks was set to None. Expected client_id to get tracks later.')
+        self.id = _id
+        self.type = _type
         self.name = name
         self.author_or_artist = author_or_artist
-        self.id = _id
+        self._tracks = tracks
         self.image_url = image_url
-
-    def __repr__(self):
-        name = self.name.replace('\'', '\\\'')
-        author_or_artist = self.author_or_artist.replace('\'', '\\\'')
-        image_url = '' if self.image_url is None else f', \'{self.image_url}\''
-        return f'Result({repr(self.tracks)}, \'{name}\', \'{author_or_artist}\'{image_url})'
-
-    def __str__(self):
-        return f'{self.name} - {self.author_or_artist}'
-
-
-class TrackResult(Result):
-    """**Represents a track result from the Spotify API.**"""
-
-    # This class is almost identical to the base (Result) but
-    # exists mainly for the sake of duck typing: to forward the artist
-    # property, so it functions also like a Track.
+        self._client_id = client_id
 
     @property
-    def track(self) -> Track:
-        return self.tracks[0]
+    def tracks(self) -> List[Track]:
+        """Getter for the result tracks. Sometimes the Result will be initialized
+        without tracks. In that case, they will be retreived in here by shamelessly
+        accessing a SpotifyAPI object."""
+        if self._tracks is None:
+            # Sike, BaseSpotifyAPI actually returns the usual class
+            # see: baseapi.py
+            spoti: SpotifyAPI = BaseSpotifyAPI(self._client_id, '')
+            self._tracks = spoti.get(self.id, result_type=self.type)._tracks
+        return self._tracks
+
+    @property
+    def author(self) -> str:
+        """Alias for ``author_or_artist``."""
+        return self.author_or_artist
 
     @property
     def artist(self) -> str:
+        """Alias for ``author_or_artist``."""
         return self.author_or_artist
+
+    def __bool__(self) -> bool:
+        return self._tracks is not None
+
+    def __eq__(self, other: Result) -> bool:
+        return self.id == other.id and str(self.type) == str(other.type)
+
+    def __repr__(self) -> str:
+        tracks = '' if self._tracks is None else f', {repr(self._tracks)}'
+        image_url = '' if self.image_url is None else f', {repr(self.image_url)}'
+        return f'Result({repr(self.id)}, {repr(self.type)}, {repr(self.name)}, ' \
+               f'{repr(self.author_or_artist)}{tracks}{image_url})'
+
+    def __str__(self) -> str:
+        return f'{self.name} - {self.author_or_artist}'
 
 
 class UserResult:
     """**Represents an user result from the Spotify API.**"""
 
-    def __init__(self, display_name: Optional[str], _id: str, image_url: Optional[str] = None):
-        self.display_name = display_name
+    def __init__(self, _id: str, display_name: Optional[str], image_url: Optional[str] = None) -> None:
         self.id = _id
+        self.display_name = display_name
         self.image_url = image_url
 
-    def __repr__(self):
-        name = self.display_name.replace('\'', '\\\'')
-        image_url = '' if self.image_url is None else f', \'{self.image_url}\''
-        return f'UserResult(\'{name}\', \'{self.id}\'{image_url})'
+    def __eq__(self, other: UserResult) -> bool:
+        return self.id == other.id
 
-    def __str__(self):
+    def __repr__(self) -> str:
+        image_url = '' if self.image_url is None else f', {repr(self.image_url)}'
+        return f'UserResult({repr(self.id)}, {repr(self.display_name)}{image_url})'
+
+    def __str__(self) -> str:
         return f'{self.display_name} - {self.id}'
+
+
+class SearchResult:
+    """**Represents a search result from the Spotify API.**
+
+    The attributes ``albums``, ``artists``, ``playlists``, and ``tracks`` are
+    lists that may contain individual ``Result`` objects ordered by relevance.
+    The length of each list can vary from zero to twenty.
+    """
+
+    def __init__(self, query: str, albums: List[Result], artists: List[Result],
+                 playlists: List[Result], tracks: List[Result]) -> None:
+        self.query = query
+        self.albums = albums
+        self.artists = artists
+        self.playlists = playlists
+        self.tracks = tracks
+
+    def __eq__(self, other: SearchResult) -> bool:
+        return self.query == other.query
+
+    def __repr__(self) -> str:
+        return f'SearchResult({repr(self.query)}, {repr(self.albums)}, ' \
+               f'{repr(self.artists)}, {repr(self.playlists)}, {repr(self.tracks)})'
+
+    def __str__(self) -> str:
+        return self.query

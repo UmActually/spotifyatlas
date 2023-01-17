@@ -8,11 +8,13 @@ By Leonardo - UmActually
 
 Most of the package's functionality is included in the ``SpotifyAPI`` class, which only needs to be initialized with the **credentials** of your client application. This codebase was originally used to retrieve track details for **Discord bots**, so most of the functions, as of now, revolve around playlists, albums, top tracks of artists, and whatnot.
 
-### Basic Usage
+## Basic Usage
 
 _Refer to the [Installation](#installation) section for information on how to install the package with `pip`._
 
 The first step to interact with the Spotify API is to register a new **application** in the **[Spotify for Developers](https://developer.spotify.com/dashboard/)** page. Worry not: this process is completely free for any Spotify user (with an account).
+
+### Quick Start
 
 With that out of the way, go ahead and initialize a new `SpotifyAPI` object with the credentials of your app (client ID and client secret):
 
@@ -43,7 +45,9 @@ for i, track in enumerate(result.tracks, 1):
 # ...
 ```
 
-The following methods offer the same functionality, although more specific:
+### Getting
+
+The following methods offer the same functionality as `get()`, although more specific:
 
 - `get_playlist()` for public playlists.
 
@@ -53,13 +57,61 @@ The following methods offer the same functionality, although more specific:
 
 - `get_album()` for albums.
 
-All four require the `url` or the ID of the element as the first argument.
+- `get_user()` for users. This returns a `UserResult`.
+
+They all require the `url` or the ID of the element as the first argument.
+
+### Searching
+
+Worry not, not everything demands you having the link of the item at hand. To perform **searches**, you can use the following methods:
+
+- `search()` to search normally, with the option to specify result types.
+
+```python
+result = spoti.search('ok human')
+top_album_result = result.albums[0]
+print(top_album_result.tracks)
+# [Track('All My Favorite Songs', 'Weezer', '6zVhXpiYbJhLJWmLGV9k1r'), ... ]
+```
+
+- `im_feeling_lucky()` if you know in advance exactly what you are looking for.
+
+```python
+result = spoti.im_feeling_lucky('quevedo biza', spotifyatlas.Type.TRACK)
+print(result)
+# Quevedo: Bzrp Music Sessions, Vol. 52 - Bizarrap
+```
+
+- The standalone function `spotifyatlas.advanced_search()` can generate a more [powerful search query](https://support.spotify.com/us/article/search/) that the user can then pass to either of the search methods (or even paste to their actual Spotify client).
+
+```python
+from spotifyatlas import advanced_search
+
+overkill_query = advanced_search(
+    'juanes',
+    album='metallica',
+    year=2021,
+    genre=spotifyatlas.Genre.ROCK
+)
+
+result = spoti.im_feeling_lucky(overkill_query, spotifyatlas.Type.TRACK)
+print(result)
+# Enter Sandman - Juanes
+```
+
+### User Functionality
 
 These other methods require **user consent**, and thus will result in the **browser** opening for the authorization of your application to act on behalf of the user:
 
+- `get_me()` for details of your own profile.
+
 - `get_private_playlist()` for private playlists you own.
 
+- `create_playlist()` to make a new empty playlist in your library.
+
 - `add_to_playlist()` to add a batch of `Track`s to a playlist.
+
+- `create_playlist_copy()` to duplicate a playlist.
 
 - `clear_playlist()` to remove all the contents of a playlist.
 

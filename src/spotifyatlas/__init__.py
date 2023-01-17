@@ -1,6 +1,6 @@
 """
 :Authors: Leonardo Corona Garza
-:Version: 0.2.0
+:Version: 0.3.0
 
 spotifyatlas
 ============
@@ -58,6 +58,8 @@ allowed redirection URLs on the dashboard of your application in the Spotify for
 The complete list of parameters/arguments of a function can be found in its documentation.
 """
 
+from . import utils
 from .spotifyapi import *
 from .datastructs import *
-from . import utils
+from .enums import *
+from .utils import advanced_search
