@@ -743,3 +743,6 @@ class SpotifyAPI(BaseSpotifyAPI):
 
     def __str__(self) -> str:
         return f'SpotifyAPI({repr(self.client_id)})'
+
+    def __hash__(self) -> int:
+        return hash(self._client_creds_b64)
