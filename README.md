@@ -45,6 +45,8 @@ for i, track in enumerate(result.tracks, 1):
 # ...
 ```
 
+> Tips: `print(track)` will format a `Track` as `'<name> - <artist>'`, similar to the example above. Also, iterating over a `Result` in a for loop is the same as iterating over its tracks. Essentially, the code above is more complicated than it could be, for demonstration purposes.
+
 ### Getting
 
 The following methods offer the same functionality as `get()`, although more specific:
@@ -68,6 +70,11 @@ Not everything demands you having the link of the item at hand. To perform **sea
 - `search()` to search normally, with the option to specify result types.
 
 ```python
+result = spoti.search('susanne sundfor')
+top_artist_result = result.artists[0]
+print(top_artist_result.name)
+# Susanne Sundfør
+
 result = spoti.search('ok human')
 top_album_result = result.albums[0]
 print(top_album_result.tracks)
@@ -149,8 +156,8 @@ For the inquisitive user, here are some more code examples out the top of my hea
 from spotifyatlas import SpotifyAPI, Track
 
 
-def artist_sort_key(_track: Track) -> str:
-    return _track.artist.lower()
+def artist_sort_key(track: Track) -> str:
+    return track.artist.lower()
 
 
 MY_PLAYLIST = '<my-playlist-link>'
