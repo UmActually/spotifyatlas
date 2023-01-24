@@ -1,17 +1,20 @@
-from typing import Optional, Union, Tuple, List, Dict
+from typing import Any, Optional, Union, Tuple, List, Dict
 from ..enums import Genre
 
 
-__all__ = ['id_from_url', 'add_params_to_url', 'parse_url_params', 'advanced_search']
+__all__ = ['get_id', 'add_params_to_url', 'parse_url_params', 'advanced_search']
 
 
-def id_from_url(url: str) -> str:
-    """Extract the ID from a Spotify share link."""
-    if url.startswith('https://open.spotify.com/'):
-        return url.split('/')[-1].split('?')[0]
-    if url.isalnum():
-        return url
-    raise ValueError('Spotify URL or ID not valid.')
+def get_id(url: Any) -> str:
+    """Extract the ID from a Spotify share link, or an object."""
+    try:
+        if url.startswith('https://open.spotify.com/'):
+            return url.split('/')[-1].split('?')[0]
+        if url.isalnum():
+            return url
+        raise ValueError('Spotify URL or ID not valid.')
+    except AttributeError:
+        return url.id
 
 
 def add_params_to_url(base_url: str, params: Dict[str, str]) -> str:

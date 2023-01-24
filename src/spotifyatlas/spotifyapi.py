@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import urllib.parse
-from typing import Any, Optional, Union, Tuple, List, Dict, Callable
+from typing import Any, Optional, Union, \
+    Tuple, List, Dict, Iterator, Callable
 from importlib import resources
 import datetime
 import random
@@ -14,10 +15,12 @@ import webbrowser
 import requests
 
 from . import utils
-from .enums import Type
+from .enums import ResultType
 # noinspection PyProtectedMember
 from .datastructs import \
-    SpotifyAPIException, SpotifyUserAuthException, Track, Result, UserResult, SearchResult
+    SpotifyAPIException, SpotifyUserAuthException, Track, \
+    TrackCollection, Playlist, Album, Artist, User, SearchResult,\
+    _OptStr
 from .baseapi import BaseSpotifyAPI
 
 # if TYPE_CHECKING:
@@ -29,53 +32,51 @@ __all__ = ['SpotifyAPI']
 
 
 _redirect_page = resources.read_text("spotifyatlas.resources", "redirectpage.html")
-_AnyTrack = Union[Track, Result]
+# _AnyTrack = Union[Track, Result]
+_LiterallyAnything = Union[Playlist, Album, Artist, Track, User]
+_AlmostAnything = Union[Playlist, Album, Artist, Track]
 
 
 class SpotifyAPI(BaseSpotifyAPI):
     """**The meat-and-potatoes of this package.**
 
     It is required that you create an app in Spotify for Developers (it's free!) to use this
-    wrapper class.
+    wrapper class. Then, initialize the Spotify API class with the credentials of your application:
 
-    The point of collecting all the primary functions in a single class is in order to share many
-    important attributes (mostly credentials, tokens and such). There are some methods that require
-    an extra permission grant from the user, i.e., whenever the program will do modifications in
-    behalf of. Using these methods will result in the Spotify app authorization page being open in
-    the browser.
-
-    It is mandatory to use the Spotify API with the credentials of your application:
-
-        >>> spoti = SpotifyAPI('your-app-client-id', 'your-app-client-secret')
+        >>> spoti = SpotifyAPI('<my-client-id>', '<my-client-secret>')
         >>> result = spoti.get('https://open.spotify.com/playlist/3wrUHfvsdnjiZ0kFJLvFOK')
         >>> result.tracks
-        [Track('Run', 'Collective Soul', '3HxX5qcaz2phmsJVPskugD'), ... ]
+        [<Track name='Run' artist='Collective Soul' id='3HxX5qcaz2phmsJVPskugD'>, ... ]
+
+    There are some methods that require an extra permission grant from the user, i.e., whenever the
+    program will do modifications in behalf of. Using these methods will result in the Spotify app
+    authorization page being open in the browser. See README for more info.
     """
 
-    @staticmethod
-    def _parse_result(result: List[dict], track_list: List[Track]) -> None:
-        """Parse the resulting JSON of a request for a playlist, track, album, or artist's top tracks."""
-        for item in result:
-            try:
-                track = item['track']
-            except KeyError:
-                track = item
-            name = track['name']
-            artist = track['artists'][0]['name']
-            _id = track['id']
-            track_list.append(Track(name, artist, _id))
+    # The point of collecting all the primary functions in a single class is in order to share
+    # many important attributes (mostly credentials, tokens and such).
 
     @staticmethod
-    def _get_image_from_result(result: dict) -> Optional[str]:
+    def _get_image_url(item: dict) -> _OptStr:
         """Return an optional image URL, with the JSON result of a request."""
         try:
-            images = result['images']
+            images = item['images']
         except KeyError:
-            images = result['album']['images']
+            images = item['album']['images']
         try:
             return images[0]['url']
         except IndexError:
             return
+
+    @staticmethod
+    def _get_class_from_enum(_type: ResultType) -> type:
+        """Used to get the right constructor when iterating over specified types
+        in the _search() method."""
+        if _type == ResultType.PLAYLIST:
+            return Playlist
+        if _type == ResultType.ARTIST:
+            return Artist
+        return Album
 
     @staticmethod
     def _requires_user_auth(func: Callable) -> Callable:
@@ -94,9 +95,10 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         :param client_id: the client ID of your application
         :param client_secret: the client secret of your application
+        :param market: optionally, specify the market (like for artist's top tracks)
         """
 
-        if client_id in super()._instances:
+        if client_id in super(SpotifyAPI, self)._instances:
             return
 
         if not client_id or not client_secret:
@@ -120,40 +122,79 @@ class SpotifyAPI(BaseSpotifyAPI):
         self._user_expires = datetime.datetime.now()
         self._prefer_user_token = False
 
-        super()._instances[client_id] = self
+        super(SpotifyAPI, self)._instances[client_id] = self
 
-    def get(self, url: str, *,
-            result_type: Optional[Union[Type, str]] = None) -> Union[Result, UserResult]:
-        """**Universal method to retreive the tracks and details of something in Spotify.**
+    def get(self, url: Union[str, _LiterallyAnything, TrackCollection], *,
+            result_type: Optional[Union[ResultType, str]] = None) -> _LiterallyAnything:
+        """**Universal method to retreive the details of something in Spotify.**
 
-        :param url: the URL of the playlist, track, album, or artist
-        :param result_type: when passing an ID instead of an URL, specify a Type.
-        :return: a ``Result``
+        :param url: the URL of the playlist, track, album, artist, or user
+        :param result_type: when passing an ID instead of an URL, specify a ResultType.
+        :return: a ``Playlist``, ``Album``, ``Artist``, ``Track``, or ``User`` object.
         """
 
-        if url.startswith('https://open.spotify.com/'):
-            kind = url.split('/')[3]
-        else:
-            if result_type is None:
-                raise ValueError('Spotify URL not valid. Please ensure the '
-                                 'URL starts with https://open.spotify.com/ or specify a result type.')
-            kind = str(result_type)
+        invalid = False
+        try:
+            if url.startswith('https://open.spotify.com/'):
+                kind = url.split('/')[3]
+            else:
+                invalid = result_type is None
+                kind = str(result_type)
+        except AttributeError:
+            invalid = url.type is None
+            kind = str(url.type)
 
-        if kind == 'playlist':
-            return self.get_playlist(url)
-        if kind == 'track':
-            return self.get_track(url)
-        if kind == 'artist':
-            return self.get_artist(url)
-        if kind == 'album':
-            return self.get_album(url)
-        if kind == 'user':
-            return self.get_user(url)
+        if not invalid:
+            if kind == 'playlist':
+                return self.get_playlist(url)
+            if kind == 'track':
+                return self.get_track(url)
+            if kind == 'artist':
+                return self.get_artist(url)
+            if kind == 'album':
+                return self.get_album(url)
+            if kind == 'user':
+                return self.get_user(url)
 
-    def _get_playlist_slice(self, url: str) -> Tuple[List[Dict], Optional[str]]:
+        raise ValueError('Spotify URL not valid. Please ensure the URL starts with '
+                         'https://open.spotify.com/ or specify a result type.')
+
+    def _parse_result(self, items: List[dict], track_list: List[Track], *,
+                      _artist: Optional[Artist] = None, _album: Optional[Album] = None) -> None:
+        """Parse the resulting JSON of a request for a playlist, track, album, or artist's
+        tracks. Optionally receive an artist and an album for when these attributes are
+        the same in all tracks."""
+
+        if _artist is not None:
+            artist = _artist
+        if _album is not None:
+            album = _album
+
+        for item in items:
+            try:
+                track = item['track']
+            except KeyError:
+                track = item
+            _id = track['id']
+            name = track['name']
+            if _artist is None:
+                artist = Artist(
+                    track['artists'][0]['id'], track['artists'][0]['name'], None,
+                    client_id=self.client_id)
+            if _album is None:
+                # noinspection PyUnboundLocalVariable
+                album = Album(
+                    track['album']['id'], track['album']['name'], artist,
+                    SpotifyAPI._get_image_url(track), client_id=self.client_id)
+
+            # noinspection PyUnboundLocalVariable
+            track_list.append(Track(
+                _id, name, artist, album, client_id=self.client_id))
+
+    def _get_playlist_slice(self, url: str) -> Tuple[List[Dict], _OptStr]:
         """Continue fetching the tracks of a playlist, in the case it has more than 100."""
 
-        params = {'fields': 'next,items(track(name,id,artists.name))'}
+        params = {'fields': 'next,items(track(id,name,artists(id,name),album(id,name,images)))'}
         headers = self._user_auth_headers() if self._prefer_user_token else self._auth_headers()
         r = requests.get(url, params=params, headers=headers)
         if r.status_code >= 400:
@@ -162,19 +203,19 @@ class SpotifyAPI(BaseSpotifyAPI):
         result = r.json()
         return result['items'], result['next']
 
-    @functools.lru_cache(maxsize=10)
-    def get_playlist(self, url: str) -> Result:
-        """**Get the tracks and details of a playlist.**
+    def get_playlist(self, url: Union[str, Playlist]) -> Playlist:
+        """**Get the tracks and details of a public playlist.**
 
         This function only retrieves information of public playlists. For a private playlist of
         your account, use ``get_private_playlist()``.
 
         :param url: the URL or ID of the playlist
-        :return: a ``Result``
+        :return: a ``Playlist``
         """
 
-        params = {'fields': 'name,owner.display_name,images.url,tracks(next,items(track(name,id,artists.name)))'}
-        playlist_id = utils.id_from_url(url)
+        params = {'fields': 'name,owner(id,display_name,images),images,tracks(next,items('
+                            'track(id,name,artists(id,name),album(id,name,images))))'}
+        playlist_id = utils.get_id(url)
 
         playlist: List[Track] = []
 
@@ -187,45 +228,62 @@ class SpotifyAPI(BaseSpotifyAPI):
         result = r.json()
         tracks = result['tracks']
         items = tracks['items']
-        _next = tracks['next']
-        SpotifyAPI._parse_result(items, playlist)
+        image_url = SpotifyAPI._get_image_url(result)
 
+        owner = result['owner']
+        owner = User(owner['id'], owner['display_name'], client_id=self.client_id)
+
+        _next = tracks['next']
+        self._parse_result(items, playlist)
         while _next is not None:
             items, _next = self._get_playlist_slice(_next)
-            SpotifyAPI._parse_result(items, playlist)
+            self._parse_result(items, playlist)
 
-        return Result(playlist_id, Type.PLAYLIST, result['name'], result['owner']['display_name'],
-                      playlist, SpotifyAPI._get_image_from_result(result))
+        return Playlist(
+            playlist_id, result['name'], owner, image_url, playlist, client_id=self.client_id)
 
-    def get_track(self, url: str) -> Result:
+    @_requires_user_auth
+    def get_private_playlist(self, url: Union[str, Playlist]) -> Playlist:
+        """**Get the tracks and details of a public or private playlist.** Private playlists
+        must belong to you, or have you as collaborator.
+
+        :param url: the URL or ID of the album
+        :return: a ``Result``
+        """
+        self._prefer_user_token = True
+        resp = self.get_playlist(url)
+        self._prefer_user_token = False
+        return resp
+
+    @functools.lru_cache(maxsize=10)
+    def get_track(self, url: Union[str, Track]) -> Track:
         """**Get the details of a track.**
 
         :param url: the URL or ID of the track
-        :return: a ``Result``
+        :return: a ``Track``
         """
 
-        track_id = utils.id_from_url(url)
+        track_id = utils.get_id(url)
 
         r = requests.get(f'https://api.spotify.com/v1/tracks/{track_id}', headers=self._auth_headers())
         if r.status_code >= 400:
             raise SpotifyAPIException(r, 'Error ocurred while retrieving track details.')
 
         result = r.json()
-        name = result['name']
-        artist = result['artists'][0]['name']
-        image_url = SpotifyAPI._get_image_from_result(result)
+        track: List[Track] = []
+        self._parse_result([result], track)
 
-        return Result(
-            track_id, Type.TRACK, name, artist, [Track(name, artist, track_id)], image_url)
+        return track[0]
 
-    def get_artist(self, url: str) -> Result:
+    @functools.lru_cache(maxsize=10)
+    def get_artist(self, url: Union[str, Artist]) -> Artist:
         """**Get the top 10 tracks and details of an artist.**
 
         :param url: the URL or ID of the artist
-        :return: a ``Result``
+        :return: an ``Artist``
         """
 
-        artist_id = utils.id_from_url(url)
+        artist_id = utils.get_id(url)
 
         r = requests.get(f'https://api.spotify.com/v1/artists/{artist_id}', headers=self._auth_headers())
         if r.status_code >= 400:
@@ -233,7 +291,7 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         result = r.json()
         name = result['name']
-        image_url = SpotifyAPI._get_image_from_result(result)
+        image_url = SpotifyAPI._get_image_url(result)
 
         r = requests.get(f'https://api.spotify.com/v1/artists/{artist_id}/top-tracks',
                          params={'market': self.market}, headers=self._auth_headers())
@@ -242,11 +300,18 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         result = r.json()
         top_tracks: List[Track] = []
-        SpotifyAPI._parse_result(result['tracks'], top_tracks)
 
-        return Result(artist_id, Type.ARTIST, name, name, top_tracks, image_url)
+        resp = Artist(artist_id, name, image_url, top_tracks, client_id=self.client_id)
 
-    def _get_album_slice(self, url: str) -> Tuple[List[Dict], Optional[str]]:
+        # There are cases where it's not the same artist thoughout the artist's top tracks.
+        # (in a feature, for example)
+        same_artist = not any(track['artists'][0]['id'] != artist_id for track in result['tracks'])
+
+        self._parse_result(result['tracks'], top_tracks, _artist=resp if same_artist else None)
+
+        return resp
+
+    def _get_album_slice(self, url: str) -> Tuple[List[Dict], _OptStr]:
         """Continue fetching the tracks of an album, in the (RARE) case it has more than 100."""
 
         r = requests.get(url, headers=self._auth_headers())
@@ -256,14 +321,15 @@ class SpotifyAPI(BaseSpotifyAPI):
         result = r.json()
         return result['items'], result['next']
 
-    def get_album(self, url: str) -> Result:
+    @functools.lru_cache(maxsize=10)
+    def get_album(self, url: Union[str, Album]) -> Album:
         """**Get the tracks and details of an album.**
 
         :param url: the URL or ID of the album
-        :return: a ``Result``
+        :return: an ``Album``
         """
 
-        album_id = utils.id_from_url(url)
+        album_id = utils.get_id(url)
 
         album: List[Track] = []
 
@@ -276,60 +342,89 @@ class SpotifyAPI(BaseSpotifyAPI):
         tracks = result['tracks']
         items = tracks['items']
         _next = tracks['next']
-        SpotifyAPI._parse_result(items, album)
+        name = result['name']
+        artist_id = result['artists'][0]['id']
 
-        # Otras slices
+        artist = Artist(
+            artist_id, result['artists'][0]['name'], client_id=self.client_id)
+        resp = Album(
+            album_id, name, artist, SpotifyAPI._get_image_url(result), album,
+            client_id=self.client_id)
+
+        same_artist = not any(track['artists'][0]['id'] != artist_id for track in items)
+
+        # Each of the album's tracks will have the same album object, which is
+        # also the return value of this function.
+        self._parse_result(
+            items, album, _artist=artist if same_artist else None, _album=resp)
         while _next is not None:
             items, _next = self._get_album_slice(_next)
-            SpotifyAPI._parse_result(items, album)
+            self._parse_result(
+                items, album, _artist=artist if same_artist else None, _album=resp)
 
-        return Result(album_id, Type.ALBUM, result['name'], result['artists'][0]['name'],
-                      album, SpotifyAPI._get_image_from_result(result))
+        return resp
 
-    def get_user(self, url: str) -> UserResult:
+    def get_album_from_track(self, url: Union[str, Track]) -> Album:
+        """**Get the album of a track.**
+
+        This functionality is automatic with ``Track`` objects, with the
+        ``album`` property.
+
+        :param url: the URL or ID of the track
+        :return: an ``Album``
+        """
+        try:
+            # noinspection PyProtectedMember
+            album = url._album
+            if album is not None:
+                return album
+        except AttributeError:
+            pass
+
+        track_id = utils.get_id(url)
+
+        r = requests.get(f'https://api.spotify.com/v1/tracks/{track_id}', headers=self._auth_headers())
+        if r.status_code >= 400:
+            raise SpotifyAPIException(r, 'Error ocurred while retrieving track details.')
+
+        result = r.json()
+        album_id = result['album']['id']
+        return self.get_album(album_id)
+
+    def get_user(self, url: Union[str, User]) -> User:
         """**Get the details of a user.**
 
         :param url: the URL or ID of the user
-        :return: a ``UserResult``
+        :return: a ``User``
         """
-
-        user_id = utils.id_from_url(url)
+        user_id = utils.get_id(url)
 
         r = requests.get(f'https://api.spotify.com/v1/users/{user_id}', headers=self._auth_headers())
         if r.status_code >= 400:
             raise SpotifyAPIException(r, 'Error ocurred while retrieving user details.')
 
         response = r.json()
-        return UserResult(user_id, response['display_name'], SpotifyAPI._get_image_from_result(response))
+        return User(
+            user_id, response['display_name'], SpotifyAPI._get_image_url(response),
+            client_id=self.client_id)
 
     @_requires_user_auth
-    def get_me(self) -> UserResult:
+    def get_me(self) -> User:
         """**Get the details of the own user.**
 
-        :return: a ``UserResult``
+        :return: a ``User``
         """
-
         r = requests.get(f'https://api.spotify.com/v1/me', headers=self._user_auth_headers())
         if r.status_code >= 400:
             raise SpotifyAPIException(r, 'Error ocurred while retrieving user details.')
 
         response = r.json()
-        return UserResult(response['id'], response['display_name'], SpotifyAPI._get_image_from_result(response))
+        return User(
+            response['id'], response['display_name'], SpotifyAPI._get_image_url(response),
+            client_id=self.client_id)
 
-    @_requires_user_auth
-    def get_private_playlist(self, url: str) -> Result:
-        """**Get the tracks and details of a private playlist that belongs to you.**
-
-        :param url: the URL or ID of the album
-        :return: a ``Result``
-        """
-        self._prefer_user_token = True
-        result = self.get_playlist(url)
-        self._prefer_user_token = False
-        return result
-
-    def _search(self, query: str, result_types: Optional[List[Type]] = None,
-                feeling_lucky: bool = False) -> Union[SearchResult, Optional[Result]]:
+    def _search(self, query: str, result_types: Optional[List[ResultType]] = None,
+                feeling_lucky: bool = False) -> Union[SearchResult, Optional[_AlmostAnything]]:
         """**Underlying function for search() and im_feeling_lucky().**
 
         I avoided merging those two methods in a single function to make a clearer
@@ -343,10 +438,12 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         params: Dict[str, str] = {'q': urllib.parse.quote(query)}
         if result_types:
-            if any(t in result_types for t in (Type.SHOW, Type.EPISODE, Type.AUDIOBOOK)):
-                raise NotImplementedError('Searching for shows, episodes or audiobooks is not supported yet.')
+            if any(t in result_types for t in (
+                    ResultType.USER, ResultType.SHOW, ResultType.EPISODE, ResultType.AUDIOBOOK)):
+                raise NotImplementedError(
+                    'Searching for users, shows, episodes, or audiobooks is not supported yet.')
         else:
-            result_types = [Type.ALBUM, Type.ARTIST, Type.PLAYLIST, Type.TRACK]
+            result_types = [ResultType.ALBUM, ResultType.ARTIST, ResultType.PLAYLIST, ResultType.TRACK]
 
         params['type'] = ','.join(map(str, result_types))
         full_url = utils.add_params_to_url('https://api.spotify.com/v1/search', params)
@@ -358,30 +455,52 @@ class SpotifyAPI(BaseSpotifyAPI):
         result: Dict[str, Any] = r.json()
         kwargs: Dict[str, Any] = {}
 
-        for result_type in result_types:
-            objects = []
-            items = result[f'{result_type}s']['items']
-            for item in items:
-                if item is None:
-                    continue
+        def iterate_results(_type: ResultType) -> Iterator[dict]:
+            _items = result[f'{_type}s']['items']
+            if feeling_lucky:
+                return iter(_items[:1])
+            return iter(_items)
 
-                if result_type == Type.ARTIST:
-                    author_or_artist = item['name']
-                elif result_type == Type.PLAYLIST:
-                    author_or_artist = item['owner']['display_name']
-                else:
-                    author_or_artist = item['artists'][0]['name']
+        if ResultType.TRACK in result_types:
+            tracks = []
+            for track in iterate_results(ResultType.TRACK):
+                artist = Artist(
+                    track['artists'][0]['id'], track['artists'][0]['name'],
+                    client_id=self.client_id)
+                tracks.append(Track(
+                    track['id'], track['name'], artist,
+                    Album(track['album']['id'], track['album']['name'], artist,
+                          SpotifyAPI._get_image_url(track['album']), client_id=self.client_id),
+                    client_id=self.client_id))
+            kwargs['tracks'] = tracks
 
-                objects.append(Result(
-                    item['id'], result_type, item['name'], author_or_artist,
-                    image_url=SpotifyAPI._get_image_from_result(item),
-                    client_id=self.client_id
-                ))
+        if ResultType.ARTIST in result_types:
+            artists = []
+            for artist in iterate_results(ResultType.ARTIST):
+                artists.append(Artist(
+                    artist['id'], artist['name'], SpotifyAPI._get_image_url(artist),
+                    client_id=self.client_id))
+            kwargs['artists'] = artists
 
-                if feeling_lucky:
-                    break
+        if ResultType.PLAYLIST in result_types:
+            playlists = []
+            for playlist in iterate_results(ResultType.PLAYLIST):
+                playlists.append(Playlist(
+                    playlist['id'], playlist['name'],
+                    User(playlist['owner']['id'], playlist['owner']['display_name'],
+                         client_id=self.client_id),
+                    SpotifyAPI._get_image_url(playlist), client_id=self.client_id))
+            kwargs['playlists'] = playlists
 
-            kwargs[f'{result_type}s'] = objects
+        if ResultType.ALBUM in result_types:
+            albums = []
+            for album in iterate_results(ResultType.ALBUM):
+                albums.append(Album(
+                    album['id'], album['name'],
+                    Artist(album['artists'][0]['id'], album['artists'][0]['name'],
+                           client_id=self.client_id),
+                    SpotifyAPI._get_image_url(album), client_id=self.client_id))
+            kwargs['albums'] = albums
 
         if feeling_lucky:
             try:
@@ -390,7 +509,7 @@ class SpotifyAPI(BaseSpotifyAPI):
                 return
         return SearchResult(query, **kwargs)
 
-    def search(self, query: str, *, result_types: Optional[List[Type]] = None) -> SearchResult:
+    def search(self, query: str, *, result_types: Optional[List[ResultType]] = None) -> SearchResult:
         """**Perform a search with a given query.** If you know exactly what you're
         searching for, consider using ``im_feeling_lucky()`` instead.
 
@@ -401,46 +520,48 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         :param query: the search query string
         :param result_types: list of expected result types to optionally limit search
-        :return: a ``SearchResult`` that contains lists of ``Result``s
+        :return: a ``SearchResult``
 
         >>> result = spoti.search('susanne sundfor')
         >>> top_artist_result = result.artists[0]
         >>> top_artist_result.name
         'Susanne Sundfør'
-        >>> top_artist_result.tracks
-        [Track('Stay Awhile', 'Röyksopp', '4wCZOU5q8Xlir3MBux8WzO'), ... ]
+        >>> top_artist_result.top_tracks
+        [<Track name='Stay Awhile' artist='Röyksopp' id='4wCZOU5q8Xlir3MBux8WzO'>, ... ]
         """
         return self._search(query, result_types)
 
-    def im_feeling_lucky(self, query: str, result_type: Type) -> Optional[Result]:
+    def im_feeling_lucky(self, query: str, result_type: ResultType) -> Optional[_AlmostAnything]:
         """**Perform a search and get the top result of the specified type.**
         I don't know if Google still has this feature, but it's a cool name
         nonetheless.
 
         :param query: the search query string
         :param result_type: the expected result type (this isn't automatic)
-        :return: Optionally, a ``Result``
+        :return: Optionally, a ``Playlist``, ``Album``, ``Artist``, or ``Track``
+        object.
 
-        >>> result = spoti.im_feeling_lucky('song machine', spotifyatlas.Type.ALBUM)
+        >>> result = spoti.im_feeling_lucky('song machine', spotifyatlas.ResultType.ALBUM)
         >>> result.artist
-        'Gorillaz'
+        <Artist name='Gorillaz' id='3AA28KZvwAUcZuOKwyblJQ'>
         >>> result.tracks
-        [Track('Strange Timez (feat. Robert Smith)', 'Gorillaz', ... ), ... ]
+        [<Track name='Strange Timez (feat. Robert Smith)' artist='Gorillaz' ... , ... ]
         """
         return self._search(query, [result_type], True)
 
     @_requires_user_auth
-    def add_to_playlist(self, url: str, tracks: List[_AnyTrack], position: int = 0) -> None:
+    def add_to_playlist(self, url: Union[str, Playlist], tracks: List[Track], position: int = 0) -> None:
         """**Add a list of tracks to a playlist.**
 
-        The playlist must belong to you, or be collaborative.
+        The playlist must belong to you, or be collaborative. You can also add tracks
+        from a playlist object with ``playlist.add()``.
 
         :param url: the URL or ID of the playlist.
-        :param tracks: a list of Track, containing the tracks to add
+        :param tracks: a list of ``Track``, containing the tracks to add
         :param position: the index (starting at 0) where the tracks will be inserted
         :return: ``None``
         """
-        playlist_id = utils.id_from_url(url)
+        playlist_id = utils.get_id(url)
 
         uris: List[str] = []
         last_pos = position
@@ -466,7 +587,7 @@ class SpotifyAPI(BaseSpotifyAPI):
             add_slice()
 
     @_requires_user_auth
-    def clear_playlist(self, url: str, *, make_copy: bool = False) -> Result:
+    def clear_playlist(self, url: Union[str, Playlist], *, make_copy: bool = False) -> Playlist:
         """**Remove ALL the songs in a playlist.**
 
         The playlist must belong to you, or be collaborative.
@@ -474,19 +595,20 @@ class SpotifyAPI(BaseSpotifyAPI):
         If you use this method to automatically rearrange or update the tracks in a playlist,
         I **strongly** recommend that you make a copy of the playlist before anything, by setting
         ``make_copy`` to ``True``. Although unlikely, it is possible that the API request succeeds
-        when clearing the playlist, and then fails while putting the tracks back.
+        when clearing the playlist, and then fails while putting the tracks back. You can also
+        clear from a playlist object with ``playlist.clear()``.
 
         :param url: the URL or ID of the playlist
         :param make_copy: whether to back up the playlist before clearing it
-        :return: the playlist ``Result`` before being modified
+        :return: the ``Playlist`` as it was before being modified
         """
         if make_copy:
-            self.create_playlist_copy(url)
+            self.duplicate_playlist(url)
 
-        playlist_id = utils.id_from_url(url)
+        playlist_id = utils.get_id(url)
 
-        result = self.get_private_playlist(url)
-        tracks = result.tracks
+        resp = self.get_private_playlist(url)
+        tracks = resp.tracks
         uris: List[Dict[str, str]] = []
 
         def clear_slice() -> None:
@@ -506,10 +628,11 @@ class SpotifyAPI(BaseSpotifyAPI):
         if len(uris) != 0:
             clear_slice()
 
-        return result
+        return resp
 
     @_requires_user_auth
-    def rearrange_playlist(self, url: str, range_start: int, range_length: int, insert_before: int) -> None:
+    def rearrange_playlist(self, url: Union[str, Playlist], range_start: int, range_length: int,
+                           insert_before: int) -> None:
         """**Change the position of a track, or range of tracks in a playlist.**
 
         The playlist must belong to you, or be collaborative. All indexes start at zero.
@@ -520,7 +643,7 @@ class SpotifyAPI(BaseSpotifyAPI):
         :param insert_before: insert the selection before the track at this index
         :return: ``None``
         """
-        playlist_id = utils.id_from_url(url)
+        playlist_id = utils.get_id(url)
 
         headers = self._user_auth_headers(content_type='application/json')
         data = json.dumps({
@@ -535,15 +658,15 @@ class SpotifyAPI(BaseSpotifyAPI):
             raise SpotifyAPIException(r, 'Error ocurred while changing the order of the tracks.')
 
     @_requires_user_auth
-    def create_playlist(self, name: str, *, description: Optional[str] = None, public: bool = True,
-                        collaborative: bool = False) -> str:
+    def create_playlist(self, name: str, *, description: _OptStr = None, public: bool = True,
+                        collaborative: bool = False) -> Playlist:
         """**Create a new playlist for the user.**
 
         :param name: the name of the new playlist
         :param description: optionally, a description
         :param public: whether to make the playlist visible to any user
         :param collaborative: whether to make the playlist collaborative (this sets ``pubilc`` to ``False``)
-        :return: the new playlist URL
+        :return: the new ``Playlist`` object
         """
 
         user_id = self.get_me().id
@@ -563,21 +686,26 @@ class SpotifyAPI(BaseSpotifyAPI):
         if r.status_code >= 400:
             raise SpotifyAPIException(r, 'Error ocurred while creating playlist.')
 
-        return r.json()['external_urls']['spotify']
+        result = r.json()
+        owner = result['owner']
+        owner = User(owner['id'], owner['display_name'], client_id=self.client_id)
+
+        return Playlist(result['id'], result['name'], owner, client_id=self.client_id)
 
     @_requires_user_auth
-    def create_playlist_copy(self, url: str) -> str:
+    def duplicate_playlist(self, url: Union[str, Playlist]) -> Playlist:
         """**Create a new playlist with the same tracks as the received playlist URL.**
 
         :param url: the playlist to copy
-        :return: the new playlist URL
+        :return: the new ``Playlist`` object
         """
         playlist = self.get_private_playlist(url)
-        new_url = self.create_playlist(playlist.name + ' copy', public=False)
-        self.add_to_playlist(new_url, playlist.tracks)
-        return new_url
+        new_playlist = self.create_playlist(playlist.name + ' copy', public=False)
+        self.add_to_playlist(new_playlist.id, playlist.tracks)
+        return new_playlist
 
     def get_genres(self) -> List[str]:
+        """**Gets all available genre seeds.**"""
         r = requests.get(
             'https://api.spotify.com/v1/recommendations/available-genre-seeds',
             headers=self._auth_headers(content_type='application/json'))
@@ -586,7 +714,7 @@ class SpotifyAPI(BaseSpotifyAPI):
 
         return r.json()['genres']
 
-    def _auth_headers(self, content_type: Optional[str] = None) -> Dict[str, str]:
+    def _auth_headers(self, content_type: _OptStr = None) -> Dict[str, str]:
         """Returns the authorization headers for many requests to the API.
         If necessary, token is updated.
         """
@@ -597,7 +725,7 @@ class SpotifyAPI(BaseSpotifyAPI):
             headers['Content-Type'] = content_type
         return headers
 
-    def _user_auth_headers(self, content_type: Optional[str] = None) -> Dict[str, str]:
+    def _user_auth_headers(self, content_type: _OptStr = None) -> Dict[str, str]:
         """Returns the authorization headers for to the API that need user
         permissions. If necessary, token is updated.
         """
@@ -739,10 +867,7 @@ class SpotifyAPI(BaseSpotifyAPI):
         return self.client_id == other.client_id
 
     def __repr__(self) -> str:
-        return f'SpotifyAPI({repr(self.client_id)}, {self.client_secret})'
-
-    def __str__(self) -> str:
-        return f'SpotifyAPI({repr(self.client_id)})'
+        return f'<SpotifyAPI client_id={repr(self.client_id)}>'
 
     def __hash__(self) -> int:
         return hash(self._client_creds_b64)

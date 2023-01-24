@@ -1,10 +1,10 @@
 from enum import Enum
 
 
-__all__ = ['Type', 'Genre']
+__all__ = ['ResultType', 'Genre']
 
 
-class Type(Enum):
+class ResultType(Enum):
     """All of Spotify's result types."""
 
     def __str__(self) -> str:
@@ -15,6 +15,7 @@ class Type(Enum):
     ARTIST = 'artist'
     PLAYLIST = 'playlist'
     TRACK = 'track'
+    USER = 'user'
     SHOW = 'show'
     EPISODE = 'episode'
     AUDIOBOOK = 'audiobook'
